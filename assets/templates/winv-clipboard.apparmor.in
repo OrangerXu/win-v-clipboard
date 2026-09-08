@@ -1,0 +1,8 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Permit Chromium's own namespace sandbox for this exact local application.
+# No system-wide sysctl change and no --no-sandbox switch are required.
+profile winv-clipboard "@APP_EXEC_AA@" flags=(unconfined) {
+  userns,
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=剪贴板 Win+V
+Comment=本地剪贴板历史与快速粘贴
+Exec=@BRIDGE_DESKTOP@ --launch @LAUNCHER_DESKTOP@
+Icon=cn.local.winvclipboard
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

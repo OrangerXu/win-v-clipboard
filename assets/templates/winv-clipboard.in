@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run the permanent local installation. No AppImage extraction/cleanup on hotkeys.
+exec @APP_EXEC_SH@ "$@"

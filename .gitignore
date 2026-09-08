@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+release/
+dist/
+coverage/
+*.AppImage
+*.deb
+*.rpm
+/native/linux-paste
+/native/linux-hotkey
+
+# Private machine state, credentials and clipboard data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log
+clipboard-history.json
+**/clipboard-history.json
+user-data/
+test-results/
+.local/
+*.bak
+.DS_Store
+
+# Local editor/agent state
+.idea/
+.vscode/
+.codex/
+.agents/

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=剪贴板 Win+V
+Comment=后台监听本地剪贴板
+Exec=@LAUNCHER_DESKTOP@ --hidden --system-hotkey
+Icon=cn.local.winvclipboard
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

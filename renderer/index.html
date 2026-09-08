@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; img-src 'self' data:; style-src 'self'; script-src 'self'" />
+    <title>剪贴板 · Win+V</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="titlebar">
+        <div class="title-group">
+          <div class="app-icon" aria-hidden="true">
+            <span class="clip-top"></span>
+            <i></i><i></i><i></i>
+          </div>
+          <div>
+            <p>本地剪贴板</p>
+            <h1>剪贴板</h1>
+          </div>
+        </div>
+        <div class="window-actions no-drag">
+          <button id="settings-button" class="icon-button" aria-label="设置" title="设置">⚙</button>
+          <button id="close-button" class="icon-button" aria-label="隐藏窗口" title="隐藏">×</button>
+        </div>
+      </header>
+
+      <section id="settings-menu" class="settings-menu no-drag" hidden>
+        <div class="setting-row">
+          <div><strong>监听剪贴板</strong><span>内容仅保存在这台设备</span></div>
+          <button id="monitor-toggle" class="switch" role="switch" aria-checked="true"><span></span></button>
+        </div>
+        <button id="clear-button" class="menu-action"><span>⌫</span>清除未固定记录</button>
+      </section>
+
+      <section class="toolbar no-drag">
+        <div class="tabs" role="tablist" aria-label="剪贴板筛选">
+          <button class="tab active" data-tab="all" role="tab" aria-selected="true"><span>◷</span>历史</button>
+          <button class="tab" data-tab="pinned" role="tab" aria-selected="false"><span>⌖</span>已固定</button>
+        </div>
+        <span id="count-badge" class="count-badge">0 项</span>
+      </section>
+
+      <label class="search-box no-drag">
+        <span aria-hidden="true">⌕</span>
+        <input id="search-input" type="search" placeholder="搜索剪贴板历史" autocomplete="off" spellcheck="false" />
+        <kbd>Ctrl F</kbd>
+      </label>
+
+      <section id="clip-list" class="clip-list no-drag" role="listbox" aria-label="剪贴板历史"></section>
+
+      <footer class="statusbar no-drag">
+        <div id="monitor-status" class="status-item"><span class="status-dot"></span>正在监听</div>
+        <div id="shortcut-status" class="shortcut-status"><kbd>Win</kbd><b>+</b><kbd>V</kbd></div>
+      </footer>
+
+      <div id="toast" class="toast no-drag" role="status" aria-live="polite" hidden></div>
+    </main>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "name": "win-v-clipboard",
+  "version": "1.0.1",
+  "description": "Local-first Win+V style clipboard history for the desktop",
+  "desktopName": "cn.local.winvclipboard.desktop",
+  "author": "Local User",
+  "main": "main.mjs",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node --test tests/install-plan.test.mjs",
+    "install:local": "node scripts/install-local.mjs",
+    "start": "electron .",
+    "build:native": "gcc native/linux-paste.c -Wall -Wextra -Werror -O2 -o native/linux-paste -lX11 -lXtst",
+    "prepack:linux": "npm run build:native",
+    "test:e2e": "electron tests/e2e.mjs",
+    "prepack:dir": "npm run build:native",
+    "pack:linux": "electron-builder --linux AppImage",
+    "pack:dir": "electron-builder --linux dir"
+  },
+  "devDependencies": {
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "cn.local.winvclipboard",
+    "productName": "WinV Clipboard",
+    "artifactName": "WinV-Clipboard-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.mjs",
+      "preload.cjs",
+      "renderer/**/*",
+      "assets/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/linux-paste",
+        "to": "bin/linux-paste"
+      }
+    ],
+    "asar": true,
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Utility",
+      "icon": "assets/icon.png",
+      "syncDesktopName": true,
+      "synopsis": "Win+V 风格的本地剪贴板历史",
+      "description": "后台监听本机剪贴板，支持全局快捷键、搜索、固定和快速粘贴。"
+    }
+  }
+}
