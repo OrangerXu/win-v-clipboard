@@ -1,24 +1,21 @@
 # WinV Clipboard
 
-一个本地优先的 Linux 剪贴板历史应用，提供类似 Windows **Win+V** 的交互：快捷键唤起、搜索历史、点击记录后回到原窗口粘贴。
+在 Linux 上用 Win+V 查看剪贴板历史。找到之前复制的内容，点一下，就能粘贴回原来的输入位置，用法接近 Windows 的 Win+V。
 
-当前重点支持 **Ubuntu / GNOME / X11**。本项目不是 Windows 系统组件，也不宣称已支持所有桌面环境。
+这是一个独立的 Linux 应用，不是 Windows 系统组件。目前主要适配 Ubuntu 的 GNOME/X11 桌面，还没有覆盖所有桌面环境。
 
-## 功能
+## 能做什么
 
-- 后台监听文本、链接、颜色和图片，最多保存 25 条历史。
-- Win+V 唤起；面板在鼠标所在屏幕的工作区居中。
-- 搜索、固定筛选、删除、暂停监听、清除未固定内容。
-- 点击历史记录后恢复原窗口焦点，再触发粘贴。
-- 普通窗口使用 Ctrl+V；GNOME Terminal 等已识别终端使用 Ctrl+Shift+V。
-- 不占用应用原本的 Ctrl+V / Ctrl+Shift+V；不额外发送 Enter。
-- 原窗口失效、助手不可用或焦点恢复失败时，明确提示自动粘贴未完成。
+- 在后台记录复制过的文本、链接、颜色和图片，最多保留 25 条。
+- 搜索历史，固定常用内容，筛选已固定项目，删除不需要的记录。
+- 暂停监听，或一次清除所有未固定的内容。
+- 按 Win+V 打开面板，面板显示在鼠标所在屏幕的工作区中央。
 
-## 快速开始
+## 从源码运行
 
-需要 Linux X11 桌面、Node.js **22.12.0+**、npm、GCC，以及 X11/XTest 开发库。
+需要 Linux X11 桌面、Node.js 22.12.0+、npm、GCC 和 X11/XTest 开发库。
 
-Ubuntu 构建依赖：
+在 Ubuntu 上安装构建依赖，然后启动应用：
 
 ```bash
 sudo apt-get install build-essential libx11-dev libxtst-dev
@@ -27,7 +24,7 @@ npm run build:native
 npm start
 ```
 
-如果 GNOME 已占用 Super+V，请按 [本地安装说明](docs/installation.md) 设置系统快捷键。若遇到 Chromium 沙箱权限错误，也请先看该说明，不要直接禁用沙箱。
+如果 Super+V 被 GNOME 占用了，按 [本地安装说明](docs/installation.md) 调整系统快捷键。遇到 Chromium 沙箱权限错误时，该文档也有处理步骤，不要直接禁用沙箱。
 
 ## 检查与构建
 
@@ -39,25 +36,31 @@ npm run pack:linux     # 另生成 AppImage，产物不会提交到 Git
 npm run install:local  # 只预览安装计划，不修改本机
 ```
 
-实际安装、登录自启动和系统快捷键见 [docs/installation.md](docs/installation.md)。真实编辑器 / 终端回归见 [docs/testing.md](docs/testing.md)。
+安装到本机、设置登录自启动和系统快捷键，见 [安装说明](docs/installation.md)。要在真实编辑器和终端中测试粘贴，见 [测试说明](docs/testing.md)。
 
-## 使用
+## 怎么粘贴
 
-1. 在其他应用复制需要保存的内容。
-2. 把输入光标放在目标位置，按 Win+V。
-3. 点击历史记录；面板隐藏，内容粘贴到原窗口。
+1. 在其他应用里复制内容。
+2. 把输入光标放到要粘贴的位置，按 Win+V。
+3. 点击一条记录。面板会隐藏，应用把焦点交回原窗口，再执行粘贴。
 
-面板内可用方向键选择、Enter 粘贴、Delete 删除、Ctrl+F 搜索、Esc 隐藏。右上角 × 只隐藏面板，退出应用请使用托盘菜单。
+普通窗口使用 Ctrl+V，GNOME Terminal 等已识别的终端使用 Ctrl+Shift+V。应用不会占用这两个快捷键，也不会在粘贴后额外发送 Enter。原窗口失效、粘贴助手不可用，或焦点没能恢复时，面板会提示自动粘贴未完成。
 
-终端手动粘贴仍遵循终端自身设置。GNOME Terminal 默认使用 Ctrl+Shift+V；普通 Ctrl+V 在命令行中可能有其他含义。
+面板里可以用方向键选择记录，Enter 粘贴，Delete 删除，Ctrl+F 搜索，Esc 隐藏。右上角的 × 也只是隐藏面板；要退出应用，用托盘菜单。
 
-## 隐私与边界
+手动粘贴仍按终端自己的快捷键设置来。GNOME Terminal 默认是 Ctrl+Shift+V，普通 Ctrl+V 在命令行里可能有别的用途。
 
-应用代码不包含云同步或遥测服务。历史保存在 Electron 的用户数据目录中，默认 Linux 路径为 `~/.config/win-v-clipboard/clipboard-history.json`，**未加密**。密码、令牌等敏感内容也可能被记录；复制敏感信息前请暂停监听，使用后清除相关历史。
+## 历史存在哪里
 
-仓库只包含源码、图标和合成测试数据，不包含真实剪贴板历史、账号凭据、本机日志、依赖目录或安装包。更多说明见 [SECURITY.md](SECURITY.md)。
+应用没有云同步或遥测服务。历史保存在本机的 Electron 用户数据目录中，Linux 默认路径是 `~/.config/win-v-clipboard/clipboard-history.json`。
 
-已实际验证的自动粘贴目标为 GTK 编辑器和 GNOME Terminal。Wayland、Windows/macOS、应用内嵌终端及自定义终端快捷键未完成验证。图片能否粘贴取决于目标应用；图片支持不等于任意文件粘贴。
+历史文件未加密。复制的密码、令牌等敏感内容也可能留下记录，所以复制前请暂停监听，用完后清除相关历史。
+
+Git 里只提交源码、图标和合成测试数据，不提交真实剪贴板历史、账号凭据、本机日志、依赖目录或安装包。详细说明见 [SECURITY.md](SECURITY.md)。
+
+## 测试过哪些环境
+
+自动粘贴已在 GTK 编辑器和 GNOME Terminal 中验证。Wayland、Windows/macOS、应用内嵌终端和自定义终端快捷键还没有完成验证。图片能否粘贴取决于目标应用，对图片的支持不保证其他文件也能粘贴。
 
 ## 项目结构
 
@@ -72,4 +75,4 @@ tests/                无界面单元测试与真实桌面回归
 docs/                 安装、测试与架构说明
 ```
 
-版本记录见 [CHANGELOG.md](CHANGELOG.md)。当前未指定开源许可证，`package.json` 标记为 `UNLICENSED`；依赖遵循各自许可证。
+版本记录见 [CHANGELOG.md](CHANGELOG.md)。项目暂未选择开源许可证，`package.json` 中标记为 `UNLICENSED`，依赖按各自的许可证使用。
