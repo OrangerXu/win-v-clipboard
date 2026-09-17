@@ -21,6 +21,8 @@ import {
 const MAX_ITEMS = 25;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const POLL_INTERVAL = 650;
+const CLIPBOARD_READ_TIMEOUT_MS = 4000;
+const STUCK_RESTART_AFTER = 3;
 const runFile = promisify(execFile);
 const PRIMARY_SHORTCUT = 'Super+V';
 const START_HIDDEN = process.argv.includes('--hidden');
@@ -45,6 +47,7 @@ let polling = false;
 let shortcutState = { primary: false, fallback: false };
 let pasteTargetWindow = parsePasteTarget(process.argv);
 let pasting = false;
+let stuckReads = 0;
 
 const iconSvg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
@@ -91,12 +94,20 @@ function classifyText(text) {
   return 'text';
 }
 
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function readClipboardSnapshot() {
-  const items = await clipboard.read();
+  const items = await withTimeout(clipboard.read(), CLIPBOARD_READ_TIMEOUT_MS, 'clipboard.read');
   for (const item of items) {
     const imageType = item.types.find((type) => type === 'image/png' || type === 'image/jpeg');
     if (imageType) {
-      const blob = await item.getType(imageType);
+      const blob = await withTimeout(item.getType(imageType), CLIPBOARD_READ_TIMEOUT_MS, 'clipboard item read');
       if (blob.size > 0 && blob.size <= MAX_IMAGE_BYTES) {
         const buffer = Buffer.from(await blob.arrayBuffer());
         const dataUrl = `data:${imageType};base64,${buffer.toString('base64')}`;
@@ -105,7 +116,7 @@ async function readClipboardSnapshot() {
     }
   }
 
-  const text = await clipboard.readText();
+  const text = await withTimeout(clipboard.readText(), CLIPBOARD_READ_TIMEOUT_MS, 'clipboard.readText');
   if (!text || Buffer.byteLength(text, 'utf8') > MAX_IMAGE_BYTES) return null;
   const type = classifyText(text);
   return { type, value: text, preview: text, label: type === 'link' ? '链接' : type === 'color' ? '颜色' : `${text.length} 个字符` };
@@ -122,6 +133,7 @@ async function captureClipboard() {
   polling = true;
   try {
     const snapshot = await readClipboardSnapshot();
+    stuckReads = 0;
     if (!snapshot || pasting) return;
     const hash = fingerprint(snapshot.type, snapshot.value);
     if (clips[0]?.hash === hash) return;
@@ -139,8 +151,16 @@ async function captureClipboard() {
     clips = trimHistory([clip, ...clips.filter((item) => item.hash !== hash)]);
     await saveHistory();
     publishHistory();
-  } catch {
+  } catch (error) {
     // Clipboard providers can be temporarily busy; the next poll retries.
+    const message = error?.message ?? String(error);
+    stuckReads = /timed out/i.test(message) ? stuckReads + 1 : 0;
+    console.error(`[monitor] capture failed: ${message}`);
+    if (stuckReads >= STUCK_RESTART_AFTER) {
+      console.error('[monitor] clipboard reads stuck repeatedly; restarting to recover');
+      app.relaunch();
+      app.exit(0);
+    }
   } finally {
     polling = false;
   }

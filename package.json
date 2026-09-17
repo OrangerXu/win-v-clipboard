@@ -1,6 +1,6 @@
 {
   "name": "win-v-clipboard",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Local-first Win+V style clipboard history for the desktop",
   "desktopName": "cn.local.winvclipboard.desktop",
   "author": "Local User",
