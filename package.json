@@ -1,6 +1,6 @@
 {
   "name": "win-v-clipboard",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Local-first Win+V style clipboard history for the desktop",
   "desktopName": "cn.local.winvclipboard.desktop",
   "author": "Local User",
@@ -14,7 +14,7 @@
     "test": "node --test tests/install-plan.test.mjs",
     "install:local": "node scripts/install-local.mjs",
     "start": "electron .",
-    "build:native": "gcc native/linux-paste.c -Wall -Wextra -Werror -O2 -o native/linux-paste -lX11 -lXtst",
+    "build:native": "gcc native/linux-paste.c -Wall -Wextra -Werror -O2 -o native/linux-paste -lX11 -lXtst -lXfixes",
     "prepack:linux": "npm run build:native",
     "test:e2e": "electron tests/e2e.mjs",
     "prepack:dir": "npm run build:native",

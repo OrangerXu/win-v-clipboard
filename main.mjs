@@ -1,7 +1,8 @@
-import { execFileSync, execFile } from 'node:child_process';
+import { execFileSync, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import net from 'node:net';
+import { existsSync, unlinkSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -21,9 +22,14 @@ import {
 const MAX_ITEMS = 25;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const POLL_INTERVAL = 650;
+// With the selection watcher active, polling is only a safety net: X11
+// clipboard reads negotiate with the selection owner on the main thread, so
+// polling often is what made panel invocation feel randomly slow.
+const SAFETY_POLL_INTERVAL = 5000;
 const CLIPBOARD_READ_TIMEOUT_MS = 4000;
 const STUCK_RESTART_AFTER = 3;
 const runFile = promisify(execFile);
+const log = (...args) => console.log(new Date().toISOString(), ...args);
 const PRIMARY_SHORTCUT = 'Super+V';
 const START_HIDDEN = process.argv.includes('--hidden');
 const USE_SYSTEM_HOTKEY = process.argv.includes('--system-hotkey');
@@ -41,6 +47,11 @@ let win;
 let tray;
 let clips = [];
 let historyPath = '';
+let invokeSocketPath = '';
+let invokeServer;
+let clipboardWatcher = null;
+let watcherReady = false;
+let watcherStopping = false;
 let monitorTimer;
 let monitoring = true;
 let polling = false;
@@ -155,9 +166,9 @@ async function captureClipboard() {
     // Clipboard providers can be temporarily busy; the next poll retries.
     const message = error?.message ?? String(error);
     stuckReads = /timed out/i.test(message) ? stuckReads + 1 : 0;
-    console.error(`[monitor] capture failed: ${message}`);
+    console.error(new Date().toISOString(), `[monitor] capture failed: ${message}`);
     if (stuckReads >= STUCK_RESTART_AFTER) {
-      console.error('[monitor] clipboard reads stuck repeatedly; restarting to recover');
+      console.error(new Date().toISOString(), '[monitor] clipboard reads stuck repeatedly; restarting to recover');
       app.relaunch();
       app.exit(0);
     }
@@ -235,7 +246,7 @@ function positionWindow() {
 function showWindow({ preservePasteTarget = false } = {}) {
   if (win.isVisible()) { win.focus(); return; }
   if (!preservePasteTarget) rememberPasteTarget();
-  console.log(`[window] show target=${pasteTargetWindow ?? 'none'} preserve=${preservePasteTarget}`);
+  log(`[window] show target=${pasteTargetWindow ?? 'none'} preserve=${preservePasteTarget}`);
   positionWindow();
   win.show();
   win.focus();
@@ -243,9 +254,86 @@ function showWindow({ preservePasteTarget = false } = {}) {
 }
 
 function toggleWindow(options) {
-  console.log(`[window] toggle visible=${win.isVisible()}`);
+  log(`[window] toggle visible=${win.isVisible()}`);
   if (win.isVisible()) win.hide();
   else showWindow(options);
+}
+
+// Shared entry for every external invocation path (socket, second instance).
+function invokeToggle(target) {
+  if (!win || win.isDestroyed()) return false;
+  if (!win.isVisible()) pasteTargetWindow = validExternalTarget(target) ? target : null;
+  toggleWindow({ preservePasteTarget: validExternalTarget(pasteTargetWindow) });
+  return true;
+}
+
+// The bridge connects here first so pressing Win+V never cold-starts a second
+// Electron process just to deliver a toggle message. If the connect fails
+// (app not running, stale socket), the bridge falls back to launching us.
+function startInvokeServer() {
+  if (process.platform !== 'linux') return;
+  try { unlinkSync(invokeSocketPath); } catch { /* first run */ }
+  invokeServer = net.createServer((socket) => {
+    socket.setEncoding('utf8');
+    let handled = false;
+    // The bridge may close its end right after sending; writing the reply
+    // then raises EPIPE, which must never take down the main process.
+    socket.on('error', (error) => log(`[invoke] client socket error: ${error.message}`));
+    socket.on('data', (chunk) => {
+      if (handled) return;
+      handled = true;
+      const line = chunk.split('\n')[0] ?? '';
+      const [command, target] = line.trim().split(/\s+/);
+      if (command !== 'toggle') { socket.end('error unknown-command\n'); return; }
+      log(`[invoke] socket target=${target ?? 'none'}`);
+      socket.end(invokeToggle(target) ? 'ok\n' : 'error no-window\n');
+    });
+  });
+  invokeServer.on('error', (error) => log(`[invoke] socket server failed: ${error.message}`));
+  invokeServer.listen(invokeSocketPath, () => log(`[invoke] listening on ${invokeSocketPath}`));
+}
+
+function setPollInterval(ms) {
+  clearInterval(monitorTimer);
+  monitorTimer = setInterval(captureClipboard, ms);
+}
+
+// XFixes reports every CLIPBOARD ownership change, so the history updates on
+// real copies instead of a busy poll that can stall the main thread behind a
+// slow selection owner.
+function startClipboardWatcher() {
+  if (process.platform !== 'linux') return;
+  const nativePaste = getNativePastePath();
+  if (!existsSync(nativePaste)) return;
+  watcherStopping = false;
+  clipboardWatcher = spawn(nativePaste, ['--watch'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  clipboardWatcher.on('error', (error) => log(`[watcher] failed to start: ${error.message}`));
+  let buffer = '';
+  clipboardWatcher.stdout.setEncoding('utf8');
+  clipboardWatcher.stdout.on('data', (chunk) => {
+    buffer += chunk;
+    let newline;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line === 'ready' && !watcherReady) {
+        watcherReady = true;
+        log('[watcher] selection events active; relaxing poll interval');
+        setPollInterval(SAFETY_POLL_INTERVAL);
+      } else if (line === 'changed') {
+        captureClipboard();
+      }
+    }
+  });
+  clipboardWatcher.on('exit', () => {
+    if (watcherReady) {
+      watcherReady = false;
+      setPollInterval(POLL_INTERVAL);
+    }
+    if (watcherStopping || app.isQuitting) return;
+    log('[watcher] exited; restarting in 1s');
+    setTimeout(startClipboardWatcher, 1000).unref();
+  });
 }
 
 function createWindow() {
@@ -280,10 +368,10 @@ function createWindow() {
       win.hide();
     }
   });
-  win.on('show', () => console.log('[window] event show'));
-  win.on('hide', () => console.log('[window] event hide'));
-  win.on('focus', () => console.log('[window] event focus'));
-  win.on('blur', () => console.log('[window] event blur'));
+  win.on('show', () => log('[window] event show'));
+  win.on('hide', () => log('[window] event hide'));
+  win.on('focus', () => log('[window] event focus'));
+  win.on('blur', () => log('[window] event blur'));
   if (!START_HIDDEN) {
     win.once('ready-to-show', () => showWindow({ preservePasteTarget: Boolean(pasteTargetWindow) }));
   }
@@ -314,13 +402,13 @@ function registerShortcuts() {
   shortcutState.primary = USE_SYSTEM_HOTKEY && process.platform === 'linux';
   if (!shortcutState.primary) {
     shortcutState.primary = globalShortcut.register(PRIMARY_SHORTCUT, () => {
-      console.log(`[shortcut] invoked ${PRIMARY_SHORTCUT}`);
+      log(`[shortcut] invoked ${PRIMARY_SHORTCUT}`);
       toggleWindow();
     });
   }
   // Ctrl+V and Ctrl+Shift+V belong to the focused application, never this manager.
   shortcutState.fallback = false;
-  console.log(`[shortcut] ${PRIMARY_SHORTCUT}=${shortcutState.primary}; paste shortcuts untouched`);
+  log(`[shortcut] ${PRIMARY_SHORTCUT}=${shortcutState.primary}; paste shortcuts untouched`);
 }
 
 async function runSelfTest() {
@@ -360,7 +448,7 @@ async function injectPaste(target) {
   if (process.platform === 'linux' && existsSync(nativePaste)) {
     if (!validExternalTarget(target)) throw new Error('没有有效的原输入窗口');
     const { stdout } = await runFile(nativePaste, ['--target', target], { timeout: 4000, maxBuffer: 4096 });
-    console.log(`[paste] ${stdout.trim()}`);
+    log(`[paste] ${stdout.trim()}`);
     return true;
   }
   throw new Error('本机粘贴助手不可用');
@@ -398,7 +486,7 @@ ipcMain.handle('clips:paste', async (_event, id) => {
   if (pasting) return { ok: false, message: '正在粘贴，请稍候' };
   const clip = clips.find((item) => item.id === id);
   if (!clip) return { ok: false, autoPasted: false };
-  console.log(`[paste] selected id=${id}`);
+  log(`[paste] selected id=${id}`);
   pasting = true;
   const target = pasteTargetWindow;
   let copied = false;
@@ -411,7 +499,7 @@ ipcMain.handle('clips:paste', async (_event, id) => {
     pasteTargetWindow = null;
     return { ok: true, autoPasted };
   } catch (error) {
-    console.error(`[paste] failed code=${error.code ?? 'unavailable'}`);
+    console.error(new Date().toISOString(), `[paste] failed code=${error.code ?? 'unavailable'}`);
     const message = copied
       ? '已复制，但未能自动粘贴。请回到输入框手动粘贴；终端使用 Ctrl+Shift+V。'
       : '复制失败，请重试。';
@@ -432,18 +520,19 @@ if (!hasLock) {
     const explicitTarget = /^0x[0-9a-f]+$/i.test(sharedTarget ?? '') && sharedTarget !== '0x0'
       ? sharedTarget
       : parsePasteTarget(commandLine);
-    if (!win) return;
-    console.log(`[instance] second target=${explicitTarget ?? 'none'} visible=${win.isVisible()}`);
-    if (!win.isVisible()) pasteTargetWindow = validExternalTarget(explicitTarget) ? explicitTarget : null;
-    toggleWindow({ preservePasteTarget: validExternalTarget(pasteTargetWindow) });
+    log(`[instance] second target=${explicitTarget ?? 'none'} visible=${win?.isVisible()}`);
+    invokeToggle(explicitTarget);
   });
   app.whenReady().then(async () => {
     app.setName('剪贴板 Win+V');
     historyPath = join(app.getPath('userData'), 'clipboard-history.json');
+    invokeSocketPath = join(app.getPath('userData'), 'invoke.sock');
     await loadHistory();
     createWindow();
     createTray();
     registerShortcuts();
+    startInvokeServer();
+    startClipboardWatcher();
     monitorTimer = setInterval(captureClipboard, POLL_INTERVAL);
     await captureClipboard();
     if (SELF_TEST) await runSelfTest();
@@ -454,5 +543,13 @@ app.on('activate', () => win ? showWindow() : createWindow());
 app.on('before-quit', () => { app.isQuitting = true; });
 app.on('will-quit', () => {
   clearInterval(monitorTimer);
+  if (clipboardWatcher && !clipboardWatcher.killed) {
+    watcherStopping = true;
+    clipboardWatcher.kill();
+  }
+  invokeServer?.close();
+  if (invokeSocketPath) {
+    try { unlinkSync(invokeSocketPath); } catch { /* already gone */ }
+  }
   globalShortcut.unregisterAll();
 });

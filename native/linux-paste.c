@@ -4,10 +4,14 @@
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/Xfixes.h>
 #include <ctype.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 static int x_error;
@@ -133,6 +137,68 @@ static int paste(Display *display, Window target) {
   return 0;
 }
 
+// Deliver the toggle to the already-running instance over its invoke socket.
+// A cold-started second Electron process took 100ms+ (seconds under memory
+// pressure) just to hand over one message; the socket does it in a few ms.
+// Returns 0 when the message was handed to the kernel for delivery.
+static int invoke_running_instance(const char *target) {
+  const char *xdg = getenv("XDG_CONFIG_HOME");
+  const char *home = getenv("HOME");
+  char path[256];
+  if (xdg && *xdg) snprintf(path, sizeof(path), "%s/win-v-clipboard/invoke.sock", xdg);
+  else if (home && *home) snprintf(path, sizeof(path), "%s/.config/win-v-clipboard/invoke.sock", home);
+  else return -1;
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+  struct sockaddr_un address = {0};
+  address.sun_family = AF_UNIX;
+  if (strlen(path) >= sizeof(address.sun_path)) { close(fd); return -1; }
+  strcpy(address.sun_path, path);
+  if (connect(fd, (struct sockaddr *)&address, sizeof(address)) < 0) { close(fd); return -1; }
+  char message[64];
+  int length = snprintf(message, sizeof(message), "toggle %s\n", target);
+  if (length <= 0 || (size_t)length >= sizeof(message) || write(fd, message, (size_t)length) != length) {
+    close(fd);
+    return -1;
+  }
+  // Keep the read side open for the reply: closing fully before the manager
+  // answers turns its reply write into EPIPE.
+  shutdown(fd, SHUT_WR);
+  struct pollfd await_reply = { .fd = fd, .events = POLLIN };
+  if (poll(&await_reply, 1, 300) > 0) {
+    char reply[16];
+    if (read(fd, reply, sizeof(reply) - 1) < 0) { /* reply is best-effort */ }
+  }
+  close(fd);
+  return 0;
+}
+
+// Report every CLIPBOARD ownership change so the manager reads the clipboard
+// on real copies instead of polling, which negotiated with the owner on the
+// main thread and delayed the panel.
+static int watch_selection_changes(Display *display) {
+  int event_base, error_base;
+  if (!XFixesQueryExtension(display, &event_base, &error_base)) {
+    fputs("XFixes unavailable\n", stderr);
+    return 7;
+  }
+  Window root = DefaultRootWindow(display);
+  Atom clipboard = XInternAtom(display, "CLIPBOARD", False);
+  XFixesSelectSelectionInput(display, root, clipboard, XFixesSetSelectionOwnerNotifyMask);
+  puts("ready");
+  fflush(stdout);
+  for (;;) {
+    XEvent event;
+    XNextEvent(display, &event);
+    if (event.type != event_base + XFixesSelectionNotify) continue;
+    XFixesSelectionNotifyEvent *notice = (XFixesSelectionNotifyEvent *)&event;
+    if (notice->subtype == XFixesSetSelectionOwnerNotify && notice->selection == clipboard) {
+      puts("changed");
+      fflush(stdout);
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   Display *display = XOpenDisplay(NULL);
   if (!display) { fputs("X11 display unavailable\n", stderr); return 1; }
@@ -142,11 +208,18 @@ int main(int argc, char **argv) {
     XCloseDisplay(display);
     return 0;
   }
+  if (argc == 2 && strcmp(argv[1], "--watch") == 0) {
+    int result = watch_selection_changes(display);
+    XCloseDisplay(display);
+    return result;
+  }
   if (argc == 3 && strcmp(argv[1], "--launch") == 0) {
     char target[32];
     snprintf(target, sizeof(target), "0x%lx", active_window(display));
     XCloseDisplay(display);
-    // Local installation uses a stable executable, not an extract-and-run process.
+    if (invoke_running_instance(target) == 0) return 0;
+    // Not running or socket unreachable: start it. Local installation uses a
+    // stable executable, not an extract-and-run process.
     execl(argv[2], argv[2], "--system-hotkey", "--paste-target", target, (char *)NULL);
     perror("launch");
     return 3;
@@ -158,7 +231,7 @@ int main(int argc, char **argv) {
     XCloseDisplay(display);
     return result;
   }
-  fputs("Usage: linux-paste --focus-id | --launch EXECUTABLE | --target WINDOW\n", stderr);
+  fputs("Usage: linux-paste --focus-id | --watch | --launch EXECUTABLE | --target WINDOW\n", stderr);
   XCloseDisplay(display);
   return 2;
 }
